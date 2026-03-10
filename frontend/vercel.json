@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/api/quotes", "destination": "/api/quotes" },
+    { "source": "/api/chart", "destination": "/api/chart" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}
