@@ -304,7 +304,7 @@ function ThemeIcon({ dark }: { dark: boolean }) {
 
 export function Dashboard({ user, onSignOut }: DashboardProps) {
   const rates = useExchangeRates();
-  const [prefsLoaded, setPrefsLoaded] = useState(false);
+  const [, setPrefsLoaded] = useState(false);
   const [currency, setCurrency] = useState<Currency>("USD");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("value");
   const [holdings, setHoldings] = useState<EnrichedHolding[]>([]);
