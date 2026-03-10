@@ -140,7 +140,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:5173", "http://localhost:5174"],
+    allow_origins=[FRONTEND_URL, "http://localhost:5173", "http://localhost:5174", "https://dobin-portfolio.vercel.app"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

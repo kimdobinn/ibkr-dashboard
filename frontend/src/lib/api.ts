@@ -47,7 +47,15 @@ export function getChart(
   );
 }
 
-// IBKR functions — only work when Python backend is running locally
+// IBKR functions — call localhost:8000 directly so they work from the deployed site too
+
+const IBKR_BASE = "http://localhost:8000/api";
+
+async function fetchIbkr<T>(path: string): Promise<T> {
+  const resp = await fetch(`${IBKR_BASE}${path}`);
+  if (!resp.ok) throw new Error(`IBKR API error: ${resp.status}`);
+  return resp.json() as Promise<T>;
+}
 
 export interface IbkrStatus {
   connected: boolean;
@@ -56,7 +64,7 @@ export interface IbkrStatus {
 }
 
 export function getIbkrStatus(): Promise<IbkrStatus> {
-  return fetchJson("/ibkr/status");
+  return fetchIbkr("/ibkr/status");
 }
 
 export interface IbkrHolding {
@@ -66,5 +74,5 @@ export interface IbkrHolding {
 }
 
 export function getIbkrHoldings(): Promise<{ holdings: IbkrHolding[] }> {
-  return fetchJson("/ibkr/holdings");
+  return fetchIbkr("/ibkr/holdings");
 }
