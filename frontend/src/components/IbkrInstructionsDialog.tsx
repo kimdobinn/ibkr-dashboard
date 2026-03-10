@@ -27,6 +27,9 @@ export function IbkrInstructionsDialog({
         <DialogHeader>
           <DialogTitle>IBKR Sync Instructions</DialogTitle>
         </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Only needed when your IBKR positions change. Run from your laptop — view from any device after.
+        </p>
         <div className="space-y-6 text-sm">
           {/* Step 1 */}
           <div className="space-y-2">
@@ -34,9 +37,12 @@ export function IbkrInstructionsDialog({
               <span className="flex items-center justify-center w-6 h-6 rounded-full bg-foreground text-background text-xs font-bold shrink-0">
                 1
               </span>
-              <span className="font-medium">Start everything</span>
+              <span className="font-medium">Start gateway + backend</span>
             </div>
-            <div className="relative group">
+            <p className="text-muted-foreground pl-8">
+              Run this in your laptop's terminal:
+            </p>
+            <div className="relative group ml-8">
               <pre className="bg-secondary/60 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
                 {startCmd}
               </pre>
@@ -80,10 +86,10 @@ export function IbkrInstructionsDialog({
               <span className="flex items-center justify-center w-6 h-6 rounded-full bg-foreground text-background text-xs font-bold shrink-0">
                 3
               </span>
-              <span className="font-medium">Sync holdings</span>
+              <span className="font-medium">Sync</span>
             </div>
             <p className="text-muted-foreground pl-8">
-              Come back here and click <span className="font-medium text-foreground">IBKR Sync</span> in the header
+              Click <span className="font-medium text-foreground">IBKR Sync</span> in the header on this page. Your holdings will be saved and visible from any device.
             </p>
           </div>
 
@@ -93,9 +99,9 @@ export function IbkrInstructionsDialog({
               <span className="flex items-center justify-center w-6 h-6 rounded-full bg-foreground text-background text-xs font-bold shrink-0">
                 4
               </span>
-              <span className="font-medium">Kill everything when done</span>
+              <span className="font-medium">Shut down when done</span>
             </div>
-            <div className="relative group">
+            <div className="relative group ml-8">
               <pre className="bg-secondary/60 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
                 {killCmd}
               </pre>
