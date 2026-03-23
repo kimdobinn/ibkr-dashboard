@@ -76,3 +76,29 @@ export interface IbkrHolding {
 export function getIbkrHoldings(): Promise<{ holdings: IbkrHolding[] }> {
   return fetchIbkr("/ibkr/holdings");
 }
+
+// Toss Securities sync — also calls localhost:8000 (Playwright runs locally)
+
+export interface TossHolding {
+  ticker: string;
+  shares: number;
+  avg_cost: number;
+}
+
+export async function syncTossHoldings(
+  name: string,
+  birthday: string,
+  phone: string
+): Promise<{ holdings: TossHolding[] }> {
+  const resp = await fetch(`${IBKR_BASE}/toss/sync`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, birthday, phone }),
+    signal: AbortSignal.timeout(180_000), // 3 min timeout for phone approval
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(text || `Toss sync error: ${resp.status}`);
+  }
+  return resp.json();
+}

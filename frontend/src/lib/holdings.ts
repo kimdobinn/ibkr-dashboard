@@ -5,7 +5,7 @@ export interface Holding {
   ticker: string;
   shares: number;
   avg_cost: number;
-  source: "ibkr" | "manual";
+  source: "ibkr" | "manual" | "toss";
 }
 
 export async function getHoldings(): Promise<Holding[]> {
@@ -18,7 +18,7 @@ export async function getHoldings(): Promise<Holding[]> {
 }
 
 export async function upsertHoldings(
-  holdings: { ticker: string; shares: number; avg_cost: number; source: "ibkr" | "manual" }[],
+  holdings: { ticker: string; shares: number; avg_cost: number; source: "ibkr" | "manual" | "toss" }[],
   userId: string
 ) {
   const rows = holdings.map((h) => ({

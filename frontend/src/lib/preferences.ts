@@ -9,6 +9,10 @@ export interface UserPreferences {
   currency: string;
   theme: string;
   last_ibkr_sync: string | null;
+  last_toss_sync: string | null;
+  toss_name: string | null;
+  toss_birthday: string | null;
+  toss_phone: string | null;
 }
 
 const DEFAULTS: UserPreferences = {
@@ -20,12 +24,16 @@ const DEFAULTS: UserPreferences = {
   currency: "USD",
   theme: "dark",
   last_ibkr_sync: null,
+  last_toss_sync: null,
+  toss_name: null,
+  toss_birthday: null,
+  toss_phone: null,
 };
 
 export async function getPreferences(userId: string): Promise<UserPreferences> {
   const { data, error } = await supabase
     .from("user_preferences")
-    .select("holding_order, rate_order, sort_field, sort_dir, display_mode, currency, theme, last_ibkr_sync")
+    .select("holding_order, rate_order, sort_field, sort_dir, display_mode, currency, theme, last_ibkr_sync, last_toss_sync, toss_name, toss_birthday, toss_phone")
     .eq("user_id", userId)
     .single();
 

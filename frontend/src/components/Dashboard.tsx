@@ -19,6 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { PriceChart } from "./PriceChart";
 import { AddHoldingDialog } from "./AddHoldingDialog";
+import { TossSyncDialog } from "./TossSyncDialog";
 import { IbkrInstructionsDialog } from "./IbkrInstructionsDialog";
 import { usePriceStream } from "@/hooks/usePriceStream";
 import type { Holding } from "@/lib/holdings";
@@ -29,7 +30,7 @@ import {
   upsertHoldings,
 } from "@/lib/holdings";
 import type { Quote } from "@/lib/api";
-import { getQuotes, getIbkrHoldings, getIbkrStatus } from "@/lib/api";
+import { getQuotes, getIbkrHoldings, getIbkrStatus, syncTossHoldings } from "@/lib/api";
 import { getPreferences, savePreferences } from "@/lib/preferences";
 
 function formatTimeAgo(iso: string): string {
@@ -104,12 +105,6 @@ type DisplayMode = "price" | "value";
 type SortField = "pnl" | "value" | "custom";
 type SortDir = "asc" | "desc";
 
-const SORT_FIELDS: { field: SortField; label: string }[] = [
-  { field: "value", label: "Value" },
-  { field: "pnl", label: "Profit" },
-  { field: "custom", label: "Custom" },
-];
-
 const TimeAgo = memo(function TimeAgo({ date }: { date: Date }) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -118,87 +113,15 @@ const TimeAgo = memo(function TimeAgo({ date }: { date: Date }) {
   }, []);
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
   let text: string;
-  if (seconds < 60) text = `${seconds}s ago`;
-  else if (seconds < 3600) text = `${Math.floor(seconds / 60)}m ago`;
-  else text = `${Math.floor(seconds / 3600)}h ago`;
-  return <span>Updated {text}</span>;
+  if (seconds < 60) text = `${seconds}s`;
+  else if (seconds < 3600) text = `${Math.floor(seconds / 60)}m`;
+  else text = `${Math.floor(seconds / 3600)}h`;
+  return <span>{text}</span>;
 });
 
-// ── Reusable toggle group ──
+// ── Holding row ──
 
-function ToggleGroup<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div className="flex bg-secondary/60 rounded-lg p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          onClick={() => onChange(o.value)}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-            value === o.value
-              ? "bg-foreground text-background shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ── Sortable exchange rate row ──
-
-interface RateRowItem {
-  id: string;
-  label: string;
-}
-
-function SortableRateRow({ item }: { item: RateRowItem }) {
-  const { attributes, listeners, setNodeRef, transform, transition } =
-    useSortable({ id: item.id });
-  const style = { transform: CSS.Transform.toString(transform), transition };
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="flex items-center gap-2 text-sm text-muted-foreground leading-relaxed"
-    >
-      <span
-        {...attributes}
-        {...listeners}
-        className="cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-muted-foreground transition-colors"
-      >
-        ⠿
-      </span>
-      <span>{item.label}</span>
-    </div>
-  );
-}
-
-// ── Sortable holding row ──
-
-interface SortableHoldingRowProps {
-  holding: EnrichedHolding;
-  isSelected: boolean;
-  displayMode: DisplayMode;
-  onSelect: () => void;
-  onDelete: (e: React.MouseEvent) => void;
-  fmt: (n: number) => string;
-  fmtSign: (n: number) => string;
-  fmtPct: (n: number) => string;
-  clr: (n: number) => string;
-  isDragSort: boolean;
-}
-
-function SortableHoldingRow({
+function HoldingRow({
   holding: h,
   isSelected,
   displayMode,
@@ -206,71 +129,61 @@ function SortableHoldingRow({
   onDelete,
   fmt,
   fmtSign,
-  fmtPct,
   clr,
-  isDragSort,
-}: SortableHoldingRowProps) {
-  const { attributes, listeners, setNodeRef, transform, transition } =
-    useSortable({ id: h.id });
-  const style = { transform: CSS.Transform.toString(transform), transition };
-
+}: {
+  holding: EnrichedHolding;
+  isSelected: boolean;
+  displayMode: DisplayMode;
+  onSelect: () => void;
+  onDelete: (e: React.MouseEvent) => void;
+  fmt: (n: number) => string;
+  fmtSign: (n: number) => string;
+  clr: (n: number) => string;
+}) {
   return (
     <div
-      ref={setNodeRef}
-      style={style}
       onClick={onSelect}
-      className={`flex items-center gap-4 py-4 px-4 rounded-2xl cursor-pointer transition-all ${
+      className={`group flex items-center gap-3 py-2.5 px-3 cursor-pointer transition-colors rounded-lg ${
         isSelected
-          ? "bg-accent/70 ring-1 ring-border"
-          : "hover:bg-accent/40"
+          ? "bg-foreground/[0.06]"
+          : "hover:bg-foreground/[0.03]"
       }`}
     >
-      {isDragSort && (
-        <span
-          {...attributes}
-          {...listeners}
-          className="cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-muted-foreground transition-colors shrink-0 text-base"
-          onClick={(e) => e.stopPropagation()}
-        >
-          ⠿
-        </span>
-      )}
+      {/* Ticker */}
+      <div className="w-16 shrink-0">
+        <span className="text-[13px] font-semibold tracking-wide">{h.ticker}</span>
+      </div>
 
-      {/* Left — ticker + subtitle */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2.5">
-          <span className="font-semibold text-base">{h.ticker}</span>
-          {h.source === "manual" && (
-            <span className="text-[11px] text-muted-foreground bg-secondary px-2 py-0.5 rounded-md">
-              manual
-            </span>
-          )}
-        </div>
-        <div className="text-sm text-muted-foreground mt-1 leading-relaxed">
-          {displayMode === "value"
-            ? `${h.shares} shares`
-            : `avg ${fmt(h.avg_cost)}`}
+      {/* Shares */}
+      <div className="text-[12px] text-foreground/40 tabular-nums w-20 shrink-0">
+        {h.shares % 1 === 0 ? h.shares : h.shares.toFixed(2)} shares
+      </div>
+
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Value/Price */}
+      <div className="text-right tabular-nums">
+        <div className="text-[13px] font-medium">
+          {displayMode === "value" ? fmt(h.value) : fmt(h.currentPrice)}
         </div>
       </div>
 
-      {/* Right — value/price + P&L */}
-      <div className="text-right shrink-0 flex items-center gap-3">
-        <div>
-          <div className="font-semibold text-base">
-            {displayMode === "value" ? fmt(h.value) : fmt(h.currentPrice)}
-          </div>
-          <div className={`text-sm mt-0.5 ${clr(h.pnl)}`}>
-            {displayMode === "value"
-              ? `${fmtSign(h.pnl)} (${Math.abs(h.pnlPercent).toFixed(1)}%)`
-              : fmtPct(h.pnlPercent)}
-          </div>
-        </div>
+      {/* P&L */}
+      <div className={`text-right tabular-nums w-24 shrink-0 text-[12px] font-medium ${clr(h.pnl)}`}>
+        {displayMode === "value"
+          ? fmtSign(h.pnl)
+          : `${h.pnlPercent >= 0 ? "+" : ""}${h.pnlPercent.toFixed(1)}%`}
+      </div>
+
+      {/* Delete for manual */}
+      <div className="w-6 shrink-0">
         {h.source === "manual" && (
           <button
             onClick={onDelete}
-            className="text-muted-foreground hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-destructive/10"
+            className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-red-400 transition-all p-0.5"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
@@ -280,21 +193,200 @@ function SortableHoldingRow({
   );
 }
 
-// ── Sun / Moon icon ──
+// ── Sortable holding row wrapper ──
 
-function ThemeIcon({ dark }: { dark: boolean }) {
-  if (dark) {
-    return (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="4" />
-        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-      </svg>
-    );
-  }
+function SortableHoldingRow(props: {
+  holding: EnrichedHolding;
+  isSelected: boolean;
+  displayMode: DisplayMode;
+  onSelect: () => void;
+  onDelete: (e: React.MouseEvent) => void;
+  fmt: (n: number) => string;
+  fmtSign: (n: number) => string;
+  clr: (n: number) => string;
+  isDragSort: boolean;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition } =
+    useSortable({ id: props.holding.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
+    <div ref={setNodeRef} style={style} className="flex items-center">
+      {props.isDragSort && (
+        <span
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing text-foreground/15 hover:text-foreground/40 transition-colors shrink-0 mr-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          ⠿
+        </span>
+      )}
+      <div className="flex-1">
+        <HoldingRow {...props} />
+      </div>
+    </div>
+  );
+}
+
+// ── Inline rate item (for header bar) ──
+
+function InlineRateItem({ id, label }: { id: string; label: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition } =
+    useSortable({ id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <span
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className="text-[11px] text-foreground/25 tabular-nums cursor-grab active:cursor-grabbing hover:text-foreground/40 transition-colors"
+    >
+      {label}
+    </span>
+  );
+}
+
+// ── Account pane ──
+
+function AccountPane({
+  title,
+  syncLabel,
+  onSync,
+  syncing,
+  lastSync,
+  holdings,
+  selectedId,
+  onSelectId,
+  displayMode,
+  fmt,
+  fmtSign,
+  clr,
+  onDelete,
+  sensors,
+  sortField,
+  onDragEnd,
+  emptyText,
+  accentColor,
+  accountValue,
+  accountPnl,
+  accountPnlPct,
+}: {
+  title: string;
+  syncLabel: string;
+  onSync: () => void;
+  syncing: boolean;
+  lastSync: string | null;
+  holdings: EnrichedHolding[];
+  selectedId: string | null;
+  onSelectId: (id: string | null) => void;
+  displayMode: DisplayMode;
+  fmt: (n: number) => string;
+  fmtSign: (n: number) => string;
+  clr: (n: number) => string;
+  onDelete: (id: string, e: React.MouseEvent) => void;
+  sensors: ReturnType<typeof useSensors>;
+  sortField: SortField;
+  onDragEnd: (event: DragEndEvent) => void;
+  emptyText: string;
+  accentColor: string;
+  accountValue: number;
+  accountPnl: number;
+  accountPnlPct: number;
+}) {
+  const selected = holdings.find((h) => h.id === selectedId);
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Pane header */}
+      <div className="flex items-baseline justify-between mb-5">
+        <div className="flex items-baseline gap-3">
+          <span className={`inline-block w-2 h-2 rounded-full ${accentColor}`} />
+          <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
+          {lastSync && (
+            <span className="text-[11px] text-foreground/30">{formatTimeAgo(lastSync)}</span>
+          )}
+        </div>
+        <button
+          onClick={onSync}
+          disabled={syncing}
+          className="text-[11px] text-foreground/40 hover:text-foreground/70 transition-colors disabled:opacity-30 uppercase tracking-widest font-medium"
+        >
+          {syncing ? "syncing..." : syncLabel}
+        </button>
+      </div>
+
+      {/* Account summary */}
+      <div className="mb-4">
+        <div className="text-[28px] font-bold tracking-tight tabular-nums leading-none">
+          {fmt(accountValue)}
+        </div>
+        <div className={`text-[13px] font-medium mt-1 tabular-nums ${clr(accountPnl)}`}>
+          {fmtSign(accountPnl)} ({accountPnlPct >= 0 ? "+" : ""}{accountPnlPct.toFixed(2)}%)
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div className="mb-4">
+        {selected ? (
+          <div className="h-[280px] bg-foreground/[0.02] rounded-xl p-4">
+            <PriceChart
+              symbol={selected.ticker}
+              avgCost={selected.avg_cost}
+              currentPrice={selected.currentPrice}
+              pnlPercent={selected.pnlPercent}
+              onClose={() => onSelectId(null)}
+              fmt={fmt}
+            />
+          </div>
+        ) : (
+          <div className="h-[280px] flex items-center justify-center text-[12px] text-foreground/20 rounded-xl border border-dashed border-foreground/[0.06]">
+            Select a holding
+          </div>
+        )}
+      </div>
+
+      {/* Holdings list header */}
+      <div className="flex items-center gap-3 px-3 pb-2 text-[11px] text-foreground/30 uppercase tracking-wider font-medium">
+        <div className="w-16 shrink-0">Ticker</div>
+        <div className="w-20 shrink-0">Qty</div>
+        <div className="flex-1" />
+        <div className="text-right">{displayMode === "value" ? "Value" : "Price"}</div>
+        <div className="text-right w-24 shrink-0">P&L</div>
+        <div className="w-6 shrink-0" />
+      </div>
+
+      {/* Holdings list */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {holdings.length === 0 ? (
+          <div className="py-12 text-center text-[13px] text-foreground/20">
+            {emptyText}
+          </div>
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={holdings.map((h) => h.id)} strategy={verticalListSortingStrategy}>
+              <div>
+                {holdings.map((h) => (
+                  <SortableHoldingRow
+                    key={h.id}
+                    holding={h}
+                    isSelected={selectedId === h.id}
+                    displayMode={displayMode}
+                    onSelect={() => onSelectId(selectedId === h.id ? null : h.id)}
+                    onDelete={(e) => onDelete(h.id, e)}
+                    fmt={fmt}
+                    fmtSign={fmtSign}
+                    clr={clr}
+                    isDragSort={sortField === "custom"}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -310,12 +402,21 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
   const [holdings, setHoldings] = useState<EnrichedHolding[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshingIbkr, setRefreshingIbkr] = useState(false);
-  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [selectedTossId, setSelectedTossId] = useState<string | null>(null);
+  const [selectedIbkrId, setSelectedIbkrId] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [tossSyncDialogOpen, setTossSyncDialogOpen] = useState(false);
+  const [refreshingToss, setRefreshingToss] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ibkrUsername, setIbkrUsername] = useState<string | null>(null);
   const [lastIbkrSync, setLastIbkrSync] = useState<string | null>(null);
+  const [lastTossSync, setLastTossSync] = useState<string | null>(null);
+  const [tossCredentials, setTossCredentials] = useState<{
+    toss_name: string | null;
+    toss_birthday: string | null;
+    toss_phone: string | null;
+  }>({ toss_name: null, toss_birthday: null, toss_phone: null });
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [sortField, setSortField] = useState<SortField>("value");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -329,7 +430,6 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
 
   const theme = useTheme((t) => save({ theme: t }));
 
-  // Load preferences from Supabase on mount
   useEffect(() => {
     getPreferences(user.id).then((p) => {
       setCurrency(p.currency as Currency);
@@ -340,6 +440,12 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
       setRateOrder(p.rate_order);
       theme.setTheme(p.theme);
       setLastIbkrSync(p.last_ibkr_sync);
+      setLastTossSync(p.last_toss_sync);
+      setTossCredentials({
+        toss_name: p.toss_name,
+        toss_birthday: p.toss_birthday,
+        toss_phone: p.toss_phone,
+      });
       setPrefsLoaded(true);
     });
   }, [user.id]);
@@ -353,8 +459,6 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
   const cPrefix = currency + " ";
   const cDecimals = currency === "KRW" ? 0 : 2;
 
-  // ── Data loading ──
-
   const loadHoldings = useCallback(async () => {
     try {
       const rawHoldings = await getHoldings();
@@ -364,7 +468,12 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
         return;
       }
       const tickers = rawHoldings.map((h) => h.ticker);
-      const quotes = await getQuotes(tickers);
+      let quotes: Record<string, Quote> = {};
+      try {
+        quotes = await getQuotes(tickers);
+      } catch {
+        // Quotes unavailable (backend down) — show holdings with last known or zero prices
+      }
       const enriched: EnrichedHolding[] = rawHoldings.map((h) => {
         const q: Quote | undefined = quotes[h.ticker];
         const currentPrice = q?.current ?? 0;
@@ -375,7 +484,7 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
         return { ...h, currentPrice, value, pnl, pnlPercent };
       });
       setHoldings(enriched);
-      setLastRefresh(new Date());
+      if (Object.keys(quotes).length > 0) setLastRefresh(new Date());
     } catch (err) {
       console.error("Failed to load holdings:", err);
     } finally {
@@ -389,7 +498,6 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
     return () => clearInterval(id);
   }, [loadHoldings]);
 
-  // Fetch IBKR username
   useEffect(() => {
     getIbkrStatus()
       .then((s) => setIbkrUsername(s.username))
@@ -416,12 +524,25 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
     setLastRefresh(new Date());
   });
 
-  // ── Computed values ──
+  // ── Computed ──
 
   const totalValue = holdings.reduce((sum, h) => sum + h.value, 0);
   const totalCost = holdings.reduce((sum, h) => sum + h.shares * h.avg_cost, 0);
   const totalPnl = totalValue - totalCost;
   const totalPnlPercent = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
+
+  const tossHoldings = useMemo(() => holdings.filter((h) => h.source === "toss"), [holdings]);
+  const ibkrHoldings = useMemo(() => holdings.filter((h) => h.source !== "toss"), [holdings]);
+
+  const tossValue = tossHoldings.reduce((s, h) => s + h.value, 0);
+  const tossCost = tossHoldings.reduce((s, h) => s + h.shares * h.avg_cost, 0);
+  const tossPnl = tossValue - tossCost;
+  const tossPnlPct = tossCost > 0 ? (tossPnl / tossCost) * 100 : 0;
+
+  const ibkrValue = ibkrHoldings.reduce((s, h) => s + h.value, 0);
+  const ibkrCost = ibkrHoldings.reduce((s, h) => s + h.shares * h.avg_cost, 0);
+  const ibkrPnl = ibkrValue - ibkrCost;
+  const ibkrPnlPct = ibkrCost > 0 ? (ibkrPnl / ibkrCost) * 100 : 0;
 
   useEffect(() => {
     setHoldingOrder((prev) => {
@@ -432,14 +553,14 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
     });
   }, [holdings.map((h) => h.id).join(",")]);
 
-  const sortedHoldings = useMemo(() => {
+  const sortHoldings = useCallback((list: EnrichedHolding[]) => {
     if (sortField === "custom") {
-      const map = new Map(holdings.map((h) => [h.id, h]));
+      const map = new Map(list.map((h) => [h.id, h]));
       return holdingOrder
         .map((id) => map.get(id))
-        .filter((h): h is EnrichedHolding => h !== undefined);
+        .filter((h): h is EnrichedHolding => h !== undefined && list.includes(h));
     }
-    const sorted = [...holdings];
+    const sorted = [...list];
     const m = sortDir === "desc" ? -1 : 1;
     switch (sortField) {
       case "pnl":
@@ -450,30 +571,22 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
         break;
     }
     return sorted;
-  }, [holdings, sortField, sortDir, holdingOrder]);
+  }, [sortField, sortDir, holdingOrder]);
 
-  const rateRows: RateRowItem[] = useMemo(() => {
+  const sortedToss = useMemo(() => sortHoldings(tossHoldings), [tossHoldings, sortHoldings]);
+  const sortedIbkr = useMemo(() => sortHoldings(ibkrHoldings), [ibkrHoldings, sortHoldings]);
+
+  const rateRows = useMemo(() => {
     if (!rates) return [];
-    const all: Record<string, RateRowItem> = {
-      usd_sgd: { id: "usd_sgd", label: `1 USD = ${rates.SGD.toFixed(2)} SGD` },
-      usd_krw: { id: "usd_krw", label: `1 USD = ${rates.KRW.toLocaleString("en-US", { maximumFractionDigits: 0 })} KRW` },
-      sgd_krw: { id: "sgd_krw", label: `1 SGD = ${rates.SGD_KRW.toLocaleString("en-US", { maximumFractionDigits: 0 })} KRW` },
+    const all: Record<string, string> = {
+      usd_sgd: `1 USD = ${rates.SGD.toFixed(2)} SGD`,
+      usd_krw: `1 USD = ${rates.KRW.toLocaleString("en-US", { maximumFractionDigits: 0 })} KRW`,
+      sgd_krw: `1 SGD = ${rates.SGD_KRW.toLocaleString("en-US", { maximumFractionDigits: 0 })} KRW`,
     };
-    return rateOrder.map((id) => all[id]).filter(Boolean);
+    return rateOrder.map((id) => ({ id, label: all[id] })).filter((r) => r.label);
   }, [rates, rateOrder]);
 
   // ── Handlers ──
-
-  const handleRateDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      setRateOrder((prev) => {
-        const next = arrayMove(prev, prev.indexOf(active.id as string), prev.indexOf(over.id as string));
-        save({ rate_order: next });
-        return next;
-      });
-    }
-  };
 
   const handleHoldingDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -481,6 +594,17 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
       setHoldingOrder((prev) => {
         const next = arrayMove(prev, prev.indexOf(active.id as string), prev.indexOf(over.id as string));
         save({ holding_order: next });
+        return next;
+      });
+    }
+  };
+
+  const handleRateDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setRateOrder((prev) => {
+        const next = arrayMove(prev, prev.indexOf(active.id as string), prev.indexOf(over.id as string));
+        save({ rate_order: next });
         return next;
       });
     }
@@ -496,9 +620,9 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
     setRefreshingIbkr(true);
     setError(null);
     try {
-      const { holdings: ibkrHoldings } = await getIbkrHoldings();
+      const { holdings: ibkrH } = await getIbkrHoldings();
       await upsertHoldings(
-        ibkrHoldings.map((h) => ({ ...h, source: "ibkr" as const })),
+        ibkrH.map((h) => ({ ...h, source: "ibkr" as const })),
         user.id
       );
       const now = new Date().toISOString();
@@ -506,9 +630,27 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
       save({ last_ibkr_sync: now });
       await loadHoldings();
     } catch {
-      setError("Failed to sync from IBKR. Make sure the gateway is running and authenticated.");
+      setError("IBKR sync failed. Is the gateway running?");
     } finally {
       setRefreshingIbkr(false);
+    }
+  };
+
+  const handleSyncToss = async (name: string, birthday: string, phone: string) => {
+    setRefreshingToss(true);
+    setError(null);
+    try {
+      const { holdings: tossH } = await syncTossHoldings(name, birthday, phone);
+      await upsertHoldings(
+        tossH.map((h) => ({ ...h, source: "toss" as const })),
+        user.id
+      );
+      const now = new Date().toISOString();
+      setLastTossSync(now);
+      save({ last_toss_sync: now });
+      await loadHoldings();
+    } finally {
+      setRefreshingToss(false);
     }
   };
 
@@ -520,11 +662,10 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     await deleteHolding(id);
-    if (selectedTicker) setSelectedTicker(null);
+    setSelectedTossId((prev) => (prev === id ? null : prev));
+    setSelectedIbkrId((prev) => (prev === id ? null : prev));
     await loadHoldings();
   };
-
-  const selectedHolding = holdings.find((h) => h.ticker === selectedTicker);
 
   // ── Formatters ──
 
@@ -537,114 +678,64 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
   };
   const fmtSign = (n: number) => (n >= 0 ? "+" : "") + fmt(n);
   const fmtPct = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
-  const clr = (n: number) => (n >= 0 ? "text-emerald-500 dark:text-emerald-400" : "text-red-500 dark:text-red-400");
+  const clr = (n: number) => (n >= 0 ? "text-emerald-400" : "text-red-400");
+
+  const CURRENCIES: Currency[] = ["USD", "SGD", "KRW"];
+  const SORT_OPTIONS: { field: SortField; label: string }[] = [
+    { field: "value", label: "Val" },
+    { field: "pnl", label: "P&L" },
+    { field: "custom", label: "Custom" },
+  ];
 
   // ════════════════════════════════════════════════════════════════════════
   // ── Render ──
   // ════════════════════════════════════════════════════════════════════════
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       {/* ── Top bar ── */}
-      <header className="border-b border-border">
-        <div className="flex items-center justify-between px-12 lg:px-24 py-4">
-          <h1 className="text-lg font-semibold tracking-tight">
+      <header className="shrink-0 flex items-center justify-between px-6 h-12 border-b border-foreground/[0.06]">
+        <div className="flex items-center gap-6">
+          <span className="text-[13px] font-semibold tracking-tight">
             {ibkrUsername ?? user.user_metadata?.full_name ?? user.email ?? "Portfolio"}
-          </h1>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setInstructionsOpen(true)}
-              className="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-accent"
-              title="IBKR Sync Instructions"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                <path d="M12 17h.01" />
-              </svg>
-            </button>
-            <button
-              onClick={handleRefreshIbkr}
-              disabled={refreshingIbkr}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
-            >
-              {refreshingIbkr ? "Syncing..." : "IBKR Sync"}
-            </button>
-            <button
-              onClick={() => setAddDialogOpen(true)}
-              className="text-sm font-medium bg-foreground text-background px-4 py-1.5 rounded-lg hover:opacity-90 transition-opacity"
-            >
-              + Add
-            </button>
-            <div className="w-px h-5 bg-border" />
-            <button
-              onClick={theme.toggle}
-              className="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-accent"
-            >
-              <ThemeIcon dark={theme.dark} />
-            </button>
-            <button
-              onClick={onSignOut}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Sign out
-            </button>
+          </span>
+
+          {/* Total */}
+          <div className="flex items-baseline gap-2">
+            <span className="text-[13px] tabular-nums font-medium">{fmt(totalValue)}</span>
+            <span className={`text-[11px] tabular-nums font-medium ${clr(totalPnl)}`}>
+              {fmtPct(totalPnlPercent)}
+            </span>
           </div>
-        </div>
-      </header>
 
-      {/* ── Summary section ── */}
-      <section className="px-12 lg:px-24 pt-8 pb-6 border-b border-border">
-        <div className="text-5xl font-bold tracking-tight leading-tight">
-          {fmt(totalValue)}
-        </div>
-        <div className={`text-lg font-medium mt-2 ${clr(totalPnl)}`}>
-          {fmtSign(totalPnl)} ({fmtPct(totalPnlPercent)})
-        </div>
-
-        <div className="flex items-center gap-3 mt-4 text-sm text-muted-foreground">
+          {/* Live indicator */}
           {lastRefresh && (
-            <>
+            <div className="flex items-center gap-1.5 text-[11px] text-foreground/30">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+              </span>
               <TimeAgo date={lastRefresh} />
-              <span className="text-border">|</span>
-              <button
-                onClick={loadHoldings}
-                className="hover:text-foreground transition-colors underline underline-offset-4"
-              >
-                Refresh
-              </button>
-              <span className="text-border">|</span>
-            </>
+            </div>
           )}
-          <span>US market Mon–Fri 9:30 PM – 4:00 AM SGT</span>
-          {lastIbkrSync && (
-            <>
-              <span className="text-border">|</span>
-              <span>IBKR synced {formatTimeAgo(lastIbkrSync)}</span>
-            </>
-          )}
-        </div>
 
-        {/* Exchange rates */}
-        {rateRows.length > 0 && (
+          {/* Rates */}
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleRateDragEnd}>
             <SortableContext items={rateRows.map((r) => r.id)} strategy={verticalListSortingStrategy}>
-              <div className="flex flex-col gap-0.5 mt-4">
+              <div className="flex items-center gap-3">
                 {rateRows.map((row) => (
-                  <SortableRateRow key={row.id} item={row} />
+                  <InlineRateItem key={row.id} id={row.id} label={row.label} />
                 ))}
               </div>
             </SortableContext>
           </DndContext>
-        )}
-      </section>
+        </div>
 
-      {/* ── Controls bar ── */}
-      <div className="px-12 lg:px-24 py-4 border-b border-border bg-secondary/20">
-        <div className="flex items-center justify-between">
-          <div className="flex gap-1.5">
-            {SORT_FIELDS.map(({ field, label }) => {
-              const isActive = sortField === field;
+        <div className="flex items-center gap-1">
+          {/* Sort */}
+          <div className="flex mr-2">
+            {SORT_OPTIONS.map(({ field, label }) => {
+              const active = sortField === field;
               return (
                 <button
                   key={field}
@@ -652,7 +743,7 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
                     if (field === "custom") {
                       setSortField("custom");
                       save({ sort_field: "custom" });
-                    } else if (isActive) {
+                    } else if (active) {
                       const next = sortDir === "desc" ? "asc" : "desc";
                       setSortDir(next);
                       save({ sort_dir: next });
@@ -662,113 +753,165 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
                       save({ sort_field: field, sort_dir: "desc" });
                     }
                   }}
-                  className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
-                    isActive
-                      ? "bg-foreground text-background shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                  className={`px-2 py-1 text-[11px] font-medium rounded transition-colors ${
+                    active
+                      ? "text-foreground bg-foreground/[0.08]"
+                      : "text-foreground/30 hover:text-foreground/50"
                   }`}
                 >
                   {label}
-                  {isActive && field !== "custom" && (
-                    <span className="ml-1">{sortDir === "desc" ? "↓" : "↑"}</span>
+                  {active && field !== "custom" && (
+                    <span className="ml-0.5">{sortDir === "desc" ? "↓" : "↑"}</span>
                   )}
                 </button>
               );
             })}
           </div>
-          <div className="flex gap-3">
-            <ToggleGroup
-              options={[
-                { value: "price" as DisplayMode, label: "Price" },
-                { value: "value" as DisplayMode, label: "Value" },
-              ]}
-              value={displayMode}
-              onChange={(v) => { setDisplayMode(v); save({ display_mode: v }); }}
-            />
-            <ToggleGroup
-              options={[
-                { value: "USD" as Currency, label: "USD" },
-                { value: "SGD" as Currency, label: "SGD" },
-                { value: "KRW" as Currency, label: "KRW" },
-              ]}
-              value={currency}
-              onChange={(v) => { setCurrency(v); save({ currency: v }); }}
-            />
+
+          {/* Display mode */}
+          <div className="flex border-l border-foreground/[0.06] pl-2 mr-2">
+            {(["price", "value"] as DisplayMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => { setDisplayMode(m); save({ display_mode: m }); }}
+                className={`px-2 py-1 text-[11px] font-medium rounded transition-colors capitalize ${
+                  displayMode === m
+                    ? "text-foreground bg-foreground/[0.08]"
+                    : "text-foreground/30 hover:text-foreground/50"
+                }`}
+              >
+                {m}
+              </button>
+            ))}
           </div>
+
+          {/* Currency */}
+          <div className="flex border-l border-foreground/[0.06] pl-2 mr-3">
+            {CURRENCIES.map((c) => (
+              <button
+                key={c}
+                onClick={() => { setCurrency(c); save({ currency: c }); }}
+                className={`px-2 py-1 text-[11px] font-medium rounded transition-colors ${
+                  currency === c
+                    ? "text-foreground bg-foreground/[0.08]"
+                    : "text-foreground/30 hover:text-foreground/50"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+
+          {/* Actions */}
+          <button
+            onClick={() => setAddDialogOpen(true)}
+            className="px-2.5 py-1 text-[11px] font-medium text-foreground/50 hover:text-foreground transition-colors"
+          >
+            + Add
+          </button>
+          <button
+            onClick={() => setInstructionsOpen(true)}
+            className="px-2 py-1 text-[11px] text-foreground/30 hover:text-foreground/50 transition-colors"
+          >
+            ?
+          </button>
+          <button
+            onClick={theme.toggle}
+            className="px-2 py-1 text-foreground/30 hover:text-foreground/50 transition-colors"
+          >
+            {theme.dark ? (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
+          </button>
+          <button
+            onClick={onSignOut}
+            className="px-2 py-1 text-[11px] text-foreground/30 hover:text-foreground/50 transition-colors"
+          >
+            out
+          </button>
         </div>
-      </div>
+      </header>
 
       {/* Error */}
       {error && (
-        <div className="px-12 lg:px-24 pt-4">
-          <div className="bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-300 text-sm rounded-xl px-5 py-3.5">
-            {error}
-          </div>
+        <div className="shrink-0 px-6 py-2 bg-red-950/40 text-red-300 text-[12px]">
+          {error}
         </div>
       )}
 
-      {/* ── Main content: Holdings + Chart ── */}
-      <main className="px-12 lg:px-24 py-6 pb-24">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(400px,1fr)_minmax(0,1.5fr)] gap-8">
-          {/* Holdings list */}
-          <div>
-            {loading ? (
-              <div className="py-20 text-center text-base text-muted-foreground">
-                Loading...
-              </div>
-            ) : holdings.length === 0 ? (
-              <div className="py-20 text-center text-base text-muted-foreground">
-                No holdings yet. Add manually or sync from IBKR.
-              </div>
-            ) : (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleHoldingDragEnd}>
-                <SortableContext items={sortedHoldings.map((h) => h.id)} strategy={verticalListSortingStrategy}>
-                  <div className="space-y-1">
-                    {sortedHoldings.map((h) => (
-                      <SortableHoldingRow
-                        key={h.id}
-                        holding={h}
-                        isSelected={selectedTicker === h.ticker}
-                        displayMode={displayMode}
-                        onSelect={() =>
-                          setSelectedTicker(selectedTicker === h.ticker ? null : h.ticker)
-                        }
-                        onDelete={(e) => handleDelete(h.id, e)}
-                        fmt={fmt}
-                        fmtSign={fmtSign}
-                        fmtPct={fmtPct}
-                        clr={clr}
-                        isDragSort={sortField === "custom"}
-                      />
-                    ))}
-                  </div>
-                </SortableContext>
-              </DndContext>
-            )}
+      {/* ── Main: two panes ── */}
+      <main className="flex-1 min-h-0 flex">
+        {loading ? (
+          <div className="flex-1 flex items-center justify-center text-[13px] text-foreground/20">
+            Loading...
           </div>
+        ) : (
+          <>
+            {/* Toss pane */}
+            <div className="flex-1 border-r border-foreground/[0.06] px-6 py-5 flex flex-col min-h-0">
+              <AccountPane
+                title="Toss Securities"
+                syncLabel="sync"
+                onSync={() => setTossSyncDialogOpen(true)}
+                syncing={refreshingToss}
+                lastSync={lastTossSync}
+                holdings={sortedToss}
+                selectedId={selectedTossId}
+                onSelectId={setSelectedTossId}
+                displayMode={displayMode}
+                fmt={fmt}
+                fmtSign={fmtSign}
+                clr={clr}
+                onDelete={handleDelete}
+                sensors={sensors}
+                sortField={sortField}
+                onDragEnd={handleHoldingDragEnd}
+                emptyText="Sync from Toss to see holdings"
+                accentColor="bg-blue-400"
+                accountValue={tossValue}
+                accountPnl={tossPnl}
+                accountPnlPct={tossPnlPct}
+              />
+            </div>
 
-          {/* Chart panel */}
-          <div>
-            {selectedHolding ? (
-              <div className="sticky top-6 bg-card border border-border rounded-2xl p-6">
-                <PriceChart
-                  symbol={selectedHolding.ticker}
-                  avgCost={selectedHolding.avg_cost}
-                  currentPrice={selectedHolding.currentPrice}
-                  pnlPercent={selectedHolding.pnlPercent}
-                  onClose={() => setSelectedTicker(null)}
-                  fmt={fmt}
-                />
-              </div>
-            ) : (
-              <div className="sticky top-6 flex items-center justify-center h-[420px] text-base text-muted-foreground rounded-2xl border border-dashed border-border">
-                Select a holding to view chart
-              </div>
-            )}
-          </div>
-        </div>
+            {/* IBKR pane */}
+            <div className="flex-1 px-6 py-5 flex flex-col min-h-0">
+              <AccountPane
+                title="Interactive Brokers"
+                syncLabel="sync"
+                onSync={handleRefreshIbkr}
+                syncing={refreshingIbkr}
+                lastSync={lastIbkrSync}
+                holdings={sortedIbkr}
+                selectedId={selectedIbkrId}
+                onSelectId={setSelectedIbkrId}
+                displayMode={displayMode}
+                fmt={fmt}
+                fmtSign={fmtSign}
+                clr={clr}
+                onDelete={handleDelete}
+                sensors={sensors}
+                sortField={sortField}
+                onDragEnd={handleHoldingDragEnd}
+                emptyText="Sync from IBKR or add manually"
+                accentColor="bg-red-400"
+                accountValue={ibkrValue}
+                accountPnl={ibkrPnl}
+                accountPnlPct={ibkrPnlPct}
+              />
+            </div>
+          </>
+        )}
       </main>
 
+      {/* Dialogs */}
       <AddHoldingDialog
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
@@ -777,6 +920,20 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
       <IbkrInstructionsDialog
         open={instructionsOpen}
         onOpenChange={setInstructionsOpen}
+      />
+      <TossSyncDialog
+        open={tossSyncDialogOpen}
+        onOpenChange={setTossSyncDialogOpen}
+        onSync={handleSyncToss}
+        savedCredentials={tossCredentials}
+        onSaveCredentials={(name, birthday, phone) => {
+          setTossCredentials({ toss_name: name, toss_birthday: birthday, toss_phone: phone });
+          save({ toss_name: name, toss_birthday: birthday, toss_phone: phone });
+        }}
+        onClearCredentials={() => {
+          setTossCredentials({ toss_name: null, toss_birthday: null, toss_phone: null });
+          save({ toss_name: null, toss_birthday: null, toss_phone: null });
+        }}
       />
     </div>
   );

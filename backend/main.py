@@ -12,6 +12,7 @@ import websockets
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 load_dotenv()
@@ -215,6 +216,153 @@ async def ibkr_holdings():
         except httpx.HTTPError as e:
             raise HTTPException(
                 status_code=502, detail=f"IBKR gateway error: {str(e)}"
+            )
+
+
+# ── Toss Securities Sync ────────────────────────────────────────────────────
+
+toss_sync_lock = asyncio.Lock()
+
+
+class TossSyncRequest(BaseModel):
+    name: str
+    birthday: str  # 6 digits, e.g. "020304"
+    phone: str  # e.g. "01050494724"
+
+
+@app.post("/api/toss/sync")
+async def toss_sync(req: TossSyncRequest):
+    if toss_sync_lock.locked():
+        raise HTTPException(status_code=409, detail="Toss sync already in progress")
+
+    async with toss_sync_lock:
+        try:
+            from playwright.async_api import async_playwright
+
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=False)
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    viewport={"width": 1280, "height": 800},
+                )
+                page = await context.new_page()
+
+                try:
+                    # Navigate to Toss Securities login
+                    await page.goto("https://www.tossinvest.com/signin", wait_until="domcontentloaded", timeout=60_000)
+
+                    # Wait for login form to be ready
+                    await page.wait_for_selector('input[placeholder="이름"]', timeout=30_000)
+
+                    # Fill in login form
+                    await page.fill('input[placeholder="이름"]', req.name)
+                    await page.fill('input[placeholder="생년월일 6자리"]', req.birthday)
+                    await page.fill('input[placeholder="휴대폰 번호"]', req.phone)
+
+                    # Tick the "필수 약관에 모두 동의" checkbox
+                    agree_checkbox = page.locator("text=필수 약관에 모두 동의")
+                    await agree_checkbox.click()
+
+                    # Click login button (the submit button, not the tab buttons)
+                    login_btn = page.locator('button[type="submit"]:has-text("로그인")')
+                    await login_btn.wait_for(state="visible")
+                    await login_btn.click()
+
+                    # Wait for redirect after phone approval (up to 120s)
+                    logger.info("Toss: waiting for phone approval...")
+                    # Poll until URL no longer contains /signin
+                    for _ in range(240):  # 240 * 0.5s = 120s
+                        await page.wait_for_timeout(500)
+                        if "/signin" not in page.url:
+                            break
+                    else:
+                        raise TimeoutError("Phone approval timed out (120s)")
+                    logger.info(f"Toss: login successful, redirected to: {page.url}")
+
+                    # Wait briefly for cookies to settle
+                    await page.wait_for_timeout(3000)
+
+                    # Navigate to account page so we're on the right origin
+                    logger.info("Toss: navigating to account page...")
+                    await page.goto("https://www.tossinvest.com/account", wait_until="domcontentloaded", timeout=60_000)
+                    await page.wait_for_timeout(3000)
+                    logger.info(f"Toss: on account page, url={page.url}")
+
+                    # Fetch holdings API from within the browser (uses session cookies automatically)
+                    logger.info("Toss: calling holdings API...")
+                    data = await page.evaluate("""async () => {
+                        const xsrf = document.cookie.split('; ')
+                            .find(c => c.startsWith('XSRF-TOKEN='))
+                            ?.split('=')[1] || '';
+                        const resp = await fetch(
+                            'https://wts-cert-api.tossinvest.com/api/v2/dashboard/asset/sections/all',
+                            {
+                                method: 'POST',
+                                headers: {
+                                    'accept': 'application/json',
+                                    'content-type': 'application/json',
+                                    'X-XSRF-TOKEN': xsrf,
+                                    'x-tossinvest-account': '1',
+                                },
+                                body: JSON.stringify({types: ['SORTED_OVERVIEW']}),
+                                credentials: 'include',
+                            }
+                        );
+                        if (!resp.ok) {
+                            return {error: true, status: resp.status, text: await resp.text()};
+                        }
+                        return await resp.json();
+                    }""")
+
+                    logger.info(f"Toss: API response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+
+                finally:
+                    await browser.close()
+
+            # Check for API errors
+            if data.get("error"):
+                logger.error(f"Toss API error: {data}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Toss API returned {data.get('status')}: {data.get('text', '')[:200]}",
+                )
+
+            # Parse holdings from response
+            result = data.get("result", {})
+            sections = result.get("sections", [])
+            holdings = []
+
+            for section in sections:
+                if section.get("type") != "SORTED_OVERVIEW":
+                    continue
+                products = section.get("data", {}).get("products", [])
+                for product in products:
+                    if product.get("marketType") != "US_STOCK":
+                        continue
+                    for item in product.get("items", []):
+                        symbol = item.get("stockSymbol")
+                        quantity = item.get("quantity", 0)
+                        purchase_price_usd = (
+                            item.get("purchasePrice", {}).get("usd", 0)
+                        )
+                        if symbol and quantity > 0:
+                            holdings.append(
+                                {
+                                    "ticker": symbol,
+                                    "shares": quantity,
+                                    "avg_cost": round(purchase_price_usd, 2),
+                                }
+                            )
+
+            logger.info(f"Toss: fetched {len(holdings)} holdings")
+            return {"holdings": holdings}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Toss sync error: {e}")
+            raise HTTPException(
+                status_code=502, detail=f"Toss sync failed: {str(e)}"
             )
 
 
