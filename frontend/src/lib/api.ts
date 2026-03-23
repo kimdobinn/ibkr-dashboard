@@ -83,6 +83,7 @@ export interface TossHolding {
   ticker: string;
   shares: number;
   avg_cost: number;
+  logo_url?: string | null;
 }
 
 export async function syncTossHoldings(

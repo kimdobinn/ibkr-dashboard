@@ -6,19 +6,20 @@ export interface Holding {
   shares: number;
   avg_cost: number;
   source: "ibkr" | "manual" | "toss";
+  logo_url: string | null;
 }
 
 export async function getHoldings(): Promise<Holding[]> {
   const { data, error } = await supabase
     .from("holdings")
-    .select("id, ticker, shares, avg_cost, source")
+    .select("id, ticker, shares, avg_cost, source, logo_url")
     .order("ticker");
   if (error) throw error;
   return data as Holding[];
 }
 
 export async function upsertHoldings(
-  holdings: { ticker: string; shares: number; avg_cost: number; source: "ibkr" | "manual" | "toss" }[],
+  holdings: { ticker: string; shares: number; avg_cost: number; source: "ibkr" | "manual" | "toss"; logo_url?: string | null }[],
   userId: string
 ) {
   const rows = holdings.map((h) => ({
@@ -27,6 +28,7 @@ export async function upsertHoldings(
     shares: h.shares,
     avg_cost: h.avg_cost,
     source: h.source,
+    ...(h.logo_url != null ? { logo_url: h.logo_url } : {}),
   }));
 
   const { error } = await supabase

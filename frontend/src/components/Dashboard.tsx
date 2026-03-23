@@ -149,8 +149,20 @@ function HoldingRow({
           : "hover:bg-foreground/[0.03]"
       }`}
     >
-      {/* Ticker */}
-      <div className="w-16 shrink-0">
+      {/* Logo + Ticker */}
+      <div className="w-20 shrink-0 flex items-center gap-2">
+        {h.logo_url ? (
+          <img
+            src={h.logo_url}
+            alt={h.ticker}
+            className="w-5 h-5 rounded-full object-cover shrink-0"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
+        ) : (
+          <div className="w-5 h-5 rounded-full bg-foreground/[0.08] flex items-center justify-center shrink-0">
+            <span className="text-[9px] font-bold text-foreground/40">{h.ticker[0]}</span>
+          </div>
+        )}
         <span className="text-[13px] font-semibold tracking-wide">{h.ticker}</span>
       </div>
 
@@ -349,7 +361,7 @@ function AccountPane({
 
       {/* Holdings list header */}
       <div className="flex items-center gap-3 px-3 pb-2 text-[11px] text-foreground/30 uppercase tracking-wider font-medium">
-        <div className="w-16 shrink-0">Ticker</div>
+        <div className="w-20 shrink-0">Ticker</div>
         <div className="w-20 shrink-0">Qty</div>
         <div className="flex-1" />
         <div className="text-right">{displayMode === "value" ? "Value" : "Price"}</div>

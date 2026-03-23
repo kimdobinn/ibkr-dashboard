@@ -345,12 +345,14 @@ async def toss_sync(req: TossSyncRequest):
                         purchase_price_usd = (
                             item.get("purchasePrice", {}).get("usd", 0)
                         )
+                        logo_url = item.get("logoImageUrl", None)
                         if symbol and quantity > 0:
                             holdings.append(
                                 {
                                     "ticker": symbol,
                                     "shares": quantity,
                                     "avg_cost": round(purchase_price_usd, 2),
+                                    "logo_url": logo_url,
                                 }
                             )
 
