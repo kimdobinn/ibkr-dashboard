@@ -346,6 +346,8 @@ async def toss_sync(req: TossSyncRequest):
                             item.get("purchasePrice", {}).get("usd", 0)
                         )
                         logo_url = item.get("logoImageUrl", None)
+                        if symbol and quantity > 0 and not logo_url:
+                            logger.info(f"Toss: no logo for {symbol}, keys: {list(item.keys())[:10]}")
                         if symbol and quantity > 0:
                             holdings.append(
                                 {

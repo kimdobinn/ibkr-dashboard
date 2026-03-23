@@ -151,18 +151,19 @@ function HoldingRow({
     >
       {/* Logo + Ticker */}
       <div className="w-20 shrink-0 flex items-center gap-2">
-        {h.logo_url ? (
-          <img
-            src={h.logo_url}
-            alt={h.ticker}
-            className="w-5 h-5 rounded-full object-cover shrink-0"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-          />
-        ) : (
-          <div className="w-5 h-5 rounded-full bg-foreground/[0.08] flex items-center justify-center shrink-0">
-            <span className="text-[9px] font-bold text-foreground/40">{h.ticker[0]}</span>
-          </div>
-        )}
+        <img
+          src={h.logo_url || `https://assets.parqet.com/logos/symbol/${h.ticker}?format=png`}
+          alt={h.ticker}
+          className="w-5 h-5 rounded-full object-cover shrink-0 bg-foreground/[0.06]"
+          onError={(e) => {
+            const el = e.target as HTMLImageElement;
+            // Replace with letter avatar on error
+            const div = document.createElement('div');
+            div.className = 'w-5 h-5 rounded-full bg-foreground/[0.08] flex items-center justify-center shrink-0';
+            div.innerHTML = `<span class="text-[9px] font-bold" style="color: var(--color-foreground); opacity: 0.4">${h.ticker[0]}</span>`;
+            el.replaceWith(div);
+          }}
+        />
         <span className="text-[13px] font-semibold tracking-wide">{h.ticker}</span>
       </div>
 
