@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo, memo } from "react";
+import { useCallback, useEffect, useState, useMemo, memo, useRef } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
   DndContext,
@@ -263,6 +263,52 @@ function InlineRateItem({ id, label }: { id: string; label: string }) {
 
 // ── Account pane ──
 
+function ResizableChart({ children, placeholder }: { children: React.ReactNode; placeholder: React.ReactNode }) {
+  const [height, setHeight] = useState(() => {
+    const saved = localStorage.getItem("chartHeight");
+    return saved ? Number(saved) : 280;
+  });
+  const dragging = useRef(false);
+  const startY = useRef(0);
+  const startH = useRef(0);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    dragging.current = true;
+    startY.current = e.clientY;
+    startH.current = height;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    const newH = Math.max(120, Math.min(600, startH.current + (e.clientY - startY.current)));
+    setHeight(newH);
+  };
+
+  const onPointerUp = () => {
+    if (dragging.current) {
+      dragging.current = false;
+      localStorage.setItem("chartHeight", String(height));
+    }
+  };
+
+  return (
+    <div className="mb-4">
+      <div style={{ height }} className="bg-foreground/[0.02] rounded-xl p-4">
+        {children}
+      </div>
+      <div
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        className="flex justify-center py-1 cursor-ns-resize group"
+      >
+        <div className="w-8 h-0.5 rounded-full bg-foreground/[0.06] group-hover:bg-foreground/[0.15] transition-colors" />
+      </div>
+    </div>
+  );
+}
+
 function AccountPane({
   title,
   syncLabel,
@@ -285,6 +331,7 @@ function AccountPane({
   accountValue,
   accountPnl,
   accountPnlPct,
+  headerSlot,
 }: {
   title: string;
   syncLabel: string;
@@ -307,6 +354,7 @@ function AccountPane({
   accountValue: number;
   accountPnl: number;
   accountPnlPct: number;
+  headerSlot?: React.ReactNode;
 }) {
   const selected = holdings.find((h) => h.id === selectedId);
 
@@ -320,6 +368,7 @@ function AccountPane({
           {lastSync && (
             <span className="text-[11px] text-foreground/30">{formatTimeAgo(lastSync)}</span>
           )}
+          {headerSlot}
         </div>
         <button
           onClick={onSync}
@@ -341,24 +390,24 @@ function AccountPane({
       </div>
 
       {/* Chart */}
-      <div className="mb-4">
-        {selected ? (
-          <div className="h-[280px] bg-foreground/[0.02] rounded-xl p-4">
-            <PriceChart
-              symbol={selected.ticker}
-              avgCost={selected.avg_cost}
-              currentPrice={selected.currentPrice}
-              pnlPercent={selected.pnlPercent}
-              onClose={() => onSelectId(null)}
-              fmt={fmt}
-            />
-          </div>
-        ) : (
-          <div className="h-[280px] flex items-center justify-center text-[12px] text-foreground/20 rounded-xl border border-dashed border-foreground/[0.06]">
+      {selected ? (
+        <ResizableChart placeholder={null}>
+          <PriceChart
+            symbol={selected.ticker}
+            avgCost={selected.avg_cost}
+            currentPrice={selected.currentPrice}
+            pnlPercent={selected.pnlPercent}
+            onClose={() => onSelectId(null)}
+            fmt={fmt}
+          />
+        </ResizableChart>
+      ) : (
+        <div className="mb-4">
+          <div className="h-[120px] flex items-center justify-center text-[12px] text-foreground/20 rounded-xl border border-dashed border-foreground/[0.06]">
             Select a holding
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Holdings list header */}
       <div className="flex items-center gap-3 px-3 pb-2 text-[11px] text-foreground/30 uppercase tracking-wider font-medium">
@@ -435,6 +484,7 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [holdingOrder, setHoldingOrder] = useState<string[]>([]);
   const [rateOrder, setRateOrder] = useState<string[]>(["usd_sgd", "usd_krw", "sgd_krw"]);
+  const [tossCurrency, setTossCurrency] = useState<"USD" | "KRW">("USD");
 
   const save = useCallback(
     (prefs: Record<string, unknown>) => savePreferences(user.id, prefs),
@@ -488,12 +538,10 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
         // Quotes unavailable (backend down) — show holdings with last known or zero prices
       }
       const enriched: EnrichedHolding[] = rawHoldings.map((h) => {
-        const q: Quote | undefined = quotes[h.ticker];
-        const currentPrice = q?.current ?? 0;
+        const currentPrice = quotes[h.ticker]?.current ?? 0;
         const value = h.shares * currentPrice;
         const pnl = h.shares * (currentPrice - h.avg_cost);
-        const pnlPercent =
-          h.avg_cost > 0 ? ((currentPrice - h.avg_cost) / h.avg_cost) * 100 : 0;
+        const pnlPercent = h.avg_cost > 0 ? ((currentPrice - h.avg_cost) / h.avg_cost) * 100 : 0;
         return { ...h, currentPrice, value, pnl, pnlPercent };
       });
       setHoldings(enriched);
@@ -529,8 +577,7 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
         const currentPrice = update.price;
         const value = h.shares * currentPrice;
         const pnl = h.shares * (currentPrice - h.avg_cost);
-        const pnlPercent =
-          h.avg_cost > 0 ? ((currentPrice - h.avg_cost) / h.avg_cost) * 100 : 0;
+        const pnlPercent = h.avg_cost > 0 ? ((currentPrice - h.avg_cost) / h.avg_cost) * 100 : 0;
         return { ...h, currentPrice, value, pnl, pnlPercent };
       })
     );
@@ -551,6 +598,16 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
   const tossCost = tossHoldings.reduce((s, h) => s + h.shares * h.avg_cost, 0);
   const tossPnl = tossValue - tossCost;
   const tossPnlPct = tossCost > 0 ? (tossPnl / tossCost) * 100 : 0;
+
+  const krwRate = rates?.KRW ?? 0;
+
+  const tossValueKrw = tossHoldings.reduce((s, h) => s + h.shares * h.currentPrice * krwRate, 0);
+  const tossCostKrw = tossHoldings.reduce((s, h) => {
+    const avgKrw = h.avg_cost_krw ?? h.avg_cost * krwRate;
+    return s + h.shares * avgKrw;
+  }, 0);
+  const tossPnlKrw = tossValueKrw - tossCostKrw;
+  const tossPnlPctKrw = tossCostKrw > 0 ? (tossPnlKrw / tossCostKrw) * 100 : 0;
 
   const ibkrValue = ibkrHoldings.reduce((s, h) => s + h.value, 0);
   const ibkrCost = ibkrHoldings.reduce((s, h) => s + h.shares * h.avg_cost, 0);
@@ -586,7 +643,20 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
     return sorted;
   }, [sortField, sortDir, holdingOrder]);
 
-  const sortedToss = useMemo(() => sortHoldings(tossHoldings), [tossHoldings, sortHoldings]);
+  // For Toss KRW mode, remap display values on the fly from live rate — no stale state
+  const tossDisplayHoldings = useMemo(() => {
+    if (tossCurrency !== "KRW") return tossHoldings;
+    return tossHoldings.map((h) => {
+      const currentPriceKrw = h.currentPrice * krwRate;
+      const valueKrw = h.shares * currentPriceKrw;
+      const avgCostKrw = h.avg_cost_krw ?? h.avg_cost * krwRate;
+      const pnlKrw = valueKrw - h.shares * avgCostKrw;
+      const pnlPercentKrw = avgCostKrw > 0 ? ((currentPriceKrw - avgCostKrw) / avgCostKrw) * 100 : 0;
+      return { ...h, currentPrice: currentPriceKrw, value: valueKrw, pnl: pnlKrw, pnlPercent: pnlPercentKrw };
+    });
+  }, [tossCurrency, tossHoldings, krwRate]);
+
+  const sortedToss = useMemo(() => sortHoldings(tossDisplayHoldings), [tossDisplayHoldings, sortHoldings]);
   const sortedIbkr = useMemo(() => sortHoldings(ibkrHoldings), [ibkrHoldings, sortHoldings]);
 
   const rateRows = useMemo(() => {
@@ -692,6 +762,17 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
   const fmtSign = (n: number) => (n >= 0 ? "+" : "") + fmt(n);
   const fmtPct = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
   const clr = (n: number) => (n >= 0 ? "text-emerald-400" : "text-red-400");
+
+  // Toss pane uses its own currency (USD or KRW), independent of the global currency selector
+  const tossFmt = tossCurrency === "KRW"
+    ? (n: number) => "₩" + Math.round(n).toLocaleString("en-US")
+    : fmt;
+  const tossFmtSign = tossCurrency === "KRW"
+    ? (n: number) => (n >= 0 ? "+" : "") + "₩" + Math.round(Math.abs(n)).toLocaleString("en-US")
+    : fmtSign;
+  const tossAccountValue = tossCurrency === "KRW" ? tossValueKrw : tossValue;
+  const tossAccountPnl = tossCurrency === "KRW" ? tossPnlKrw : tossPnl;
+  const tossAccountPnlPct = tossCurrency === "KRW" ? tossPnlPctKrw : tossPnlPct;
 
   const CURRENCIES: Currency[] = ["USD", "SGD", "KRW"];
   const SORT_OPTIONS: { field: SortField; label: string }[] = [
@@ -879,8 +960,8 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
                 selectedId={selectedTossId}
                 onSelectId={setSelectedTossId}
                 displayMode={displayMode}
-                fmt={fmt}
-                fmtSign={fmtSign}
+                fmt={tossFmt}
+                fmtSign={tossFmtSign}
                 clr={clr}
                 onDelete={handleDelete}
                 sensors={sensors}
@@ -888,9 +969,26 @@ export function Dashboard({ user, onSignOut }: DashboardProps) {
                 onDragEnd={handleHoldingDragEnd}
                 emptyText="Sync from Toss to see holdings"
                 accentColor="bg-blue-400"
-                accountValue={tossValue}
-                accountPnl={tossPnl}
-                accountPnlPct={tossPnlPct}
+                accountValue={tossAccountValue}
+                accountPnl={tossAccountPnl}
+                accountPnlPct={tossAccountPnlPct}
+                headerSlot={
+                  <div className="flex gap-0.5 ml-1">
+                    {(["USD", "KRW"] as const).map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => setTossCurrency(c)}
+                        className={`px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                          tossCurrency === c
+                            ? "text-foreground bg-foreground/[0.08]"
+                            : "text-foreground/25 hover:text-foreground/50"
+                        }`}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                }
               />
             </div>
 

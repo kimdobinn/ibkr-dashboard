@@ -342,18 +342,17 @@ async def toss_sync(req: TossSyncRequest):
                     for item in product.get("items", []):
                         symbol = item.get("stockSymbol")
                         quantity = item.get("quantity", 0)
-                        purchase_price_usd = (
-                            item.get("purchasePrice", {}).get("usd", 0)
-                        )
+                        purchase_price = item.get("purchasePrice", {})
+                        purchase_price_usd = purchase_price.get("usd", 0)
+                        purchase_price_krw = purchase_price.get("krw", None)
                         logo_url = item.get("logoImageUrl", None)
-                        if symbol and quantity > 0 and not logo_url:
-                            logger.info(f"Toss: no logo for {symbol}, keys: {list(item.keys())[:10]}")
                         if symbol and quantity > 0:
                             holdings.append(
                                 {
                                     "ticker": symbol,
                                     "shares": quantity,
-                                    "avg_cost": round(purchase_price_usd, 2),
+                                    "avg_cost": purchase_price_usd,
+                                    "avg_cost_krw": purchase_price_krw,
                                     "logo_url": logo_url,
                                 }
                             )

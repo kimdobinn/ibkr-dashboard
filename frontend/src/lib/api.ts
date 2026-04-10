@@ -83,6 +83,7 @@ export interface TossHolding {
   ticker: string;
   shares: number;
   avg_cost: number;
+  avg_cost_krw?: number | null;
   logo_url?: string | null;
 }
 
